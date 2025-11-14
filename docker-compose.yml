@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: text-to-sql-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: text-to-sql-backend
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OLLAMA_BASE_URL: http://ollama:11434
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      # SQL Server connection (for business data)
+      SQLSERVER_HOST: ${SQLSERVER_HOST:-host.docker.internal}
+      SQLSERVER_PORT: ${SQLSERVER_PORT:-1433}
+      SQLSERVER_DB: ${SQLSERVER_DB:-VikasAI}
+      SQLSERVER_USER: ${SQLSERVER_USER:-sa}
+      SQLSERVER_PASSWORD: ${SQLSERVER_PASSWORD:-YourStrong@Passw0rd}
+      # Authentication credentials
+      AUTH_EMAIL: ${AUTH_EMAIL}
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    command: sh -c "chmod +x /app/startup.sh && /app/startup.sh"
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: text-to-sql-frontend
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=/api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - app-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: text-to-sql-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - app-network
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_NUM_THREAD=4
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: text-to-sql-nginx
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  ollama_data:
+
+networks:
+  app-network:
+    driver: bridge
+
