@@ -100,6 +100,13 @@ def format_results_as_html(data: List[Dict[str, Any]], summary: Optional[Dict[st
                 html.append(f'<td{css_class}>{formatted_value}</td>')
             html.append('</tr>')
         html.append('</tbody>')
+        
+        # Footer with column headers
+        html.append('<tfoot><tr>')
+        for col in columns:
+            formatted_col = col.replace('_', ' ').title()
+            html.append(f'<th>{formatted_col}</th>')
+        html.append('</tr></tfoot>')
     
     html.append('</table>')
     html.append('</div>')

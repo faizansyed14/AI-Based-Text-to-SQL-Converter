@@ -130,8 +130,10 @@ function App() {
                 onChange={(e) => setSelectedModel(e.target.value)}
                 title="Select AI Model"
               >
-                <option value="gpt-4o-mini">gpt-4o-mini (OpenAI)</option>
-                <option value="llama3.2:1b">llama3.2:1b (Ollama)</option>
+                <option value="gpt-4o-mini">gpt-4o-mini - Fastest & Most Cost-Effective</option>
+                <option value="gpt-4o">gpt-4o - Balanced Speed & Accuracy</option>
+                <option value="gpt-4-turbo">gpt-4-turbo - High Accuracy</option>
+                <option value="gpt-4">gpt-4 - Most Accurate (Slower)</option>
               </select>
             </div>
             <div className="theme-toggle-container">

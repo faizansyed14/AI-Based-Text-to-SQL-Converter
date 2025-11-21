@@ -13,10 +13,17 @@ interface Message {
   content: string
   sqlQuery?: string
   data?: any[]
+  formattedHtml?: string  // HTML formatted results
+  summary?: any  // Analysis summary
   error?: string
   timestamp: Date
   modelUsed?: string  // Track which model was used
-}
+  hasMoreRecords?: boolean  // Indicates if there are more records
+  totalCount?: number  // Total number of records
+          showVisualization?: boolean  // Whether to show chart
+          chartConfig?: any  // Chart configuration
+          availableColumns?: string[]  // Available columns for visualization
+        }
 
 interface ChatSession {
   id: number
@@ -127,6 +134,12 @@ const ChatInterface = ({ showUpload, onUploadToggle, selectedModel }: ChatInterf
           data: messageData,
           error: msg.error,
           timestamp: new Date(msg.timestamp),
+          modelUsed: msg.model_used || msg.modelUsed,
+          hasMoreRecords: msg.has_more_records || msg.hasMoreRecords,
+          totalCount: msg.total_count || msg.totalCount,
+          showVisualization: msg.show_visualization || msg.showVisualization,
+          chartConfig: msg.chart_config || msg.chartConfig,
+          availableColumns: msg.available_columns || msg.availableColumns,
         }
       })
       
@@ -135,6 +148,120 @@ const ChatInterface = ({ showUpload, onUploadToggle, selectedModel }: ChatInterf
     } catch (error) {
       console.error('Failed to load session messages:', error)
       setMessages([])
+    }
+  }
+
+  const handleVisualize = async (xAxisColumn: string, yAxisColumn: string, sessionId?: number) => {
+    if (!xAxisColumn || !yAxisColumn) return
+    
+    const targetSessionId = sessionId || currentSessionId
+    if (!targetSessionId) {
+      console.error('No session ID available for visualization')
+      return
+    }
+    
+    setIsLoading(true)
+    
+    try {
+      const response = await axios.post('/api/visualize', {
+        session_id: targetSessionId,
+        x_axis_column: xAxisColumn,
+        y_axis_column: yAxisColumn,
+        chart_type: 'trend'
+      })
+      
+      const visualizationMessage: Message = {
+        role: 'assistant',
+        content: response.data.message,
+        sqlQuery: response.data.sql_query,
+        data: response.data.data,
+        formattedHtml: response.data.formatted_html,
+        summary: response.data.summary,
+        error: response.data.error,
+        timestamp: new Date(),
+        modelUsed: response.data.model_name,
+        hasMoreRecords: response.data.has_more_records || false,
+        totalCount: response.data.total_count || undefined,
+        showVisualization: response.data.show_visualization,
+        chartConfig: response.data.chart_config,
+        availableColumns: response.data.available_columns,
+      }
+      
+      setMessages((prev: Message[]) => [...prev, visualizationMessage])
+      await loadSessions()
+    } catch (error: any) {
+      console.error('Visualization error:', error)
+      const errorMessage: Message = {
+        role: 'assistant',
+        content: `Error creating visualization: ${error.response?.data?.detail || error.message}`,
+        error: error.response?.data?.detail || error.message,
+        timestamp: new Date(),
+      }
+      setMessages((prev: Message[]) => [...prev, errorMessage])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleShowAllRecords = async (sqlQuery: string) => {
+    if (!sqlQuery || isLoading) return
+
+    // Remove TOP clause from SQL to get all records
+    const allRecordsQuery = sqlQuery.replace(/\bTOP\s+\d+\b/gi, '').trim()
+    
+    // Send a message to execute the query without limit
+    const userMessage: Message = {
+      role: 'user',
+      content: `Show all records`,
+      timestamp: new Date(),
+    }
+
+    setMessages((prev: Message[]) => [...prev, userMessage])
+    setIsLoading(true)
+
+    try {
+      const conversationHistory = messages.map((msg: Message) => ({
+        role: msg.role,
+        content: msg.content,
+      }))
+
+      // Execute the SQL query directly by asking to show all
+      const response = await axios.post('/api/chat', {
+        message: `Execute this query and show all results: ${allRecordsQuery}`,
+        conversation_history: conversationHistory,
+        session_id: currentSessionId,
+        model: selectedModel,
+      })
+
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.data.message,
+        sqlQuery: response.data.sql_query,
+        data: response.data.data,
+        formattedHtml: response.data.formatted_html,
+        summary: response.data.summary,
+        error: response.data.error,
+        timestamp: new Date(),
+        modelUsed: response.data.model_name,
+        hasMoreRecords: response.data.has_more_records || false,
+        totalCount: response.data.total_count || undefined,
+        showVisualization: response.data.show_visualization,
+        chartConfig: response.data.chart_config,
+        availableColumns: response.data.available_columns,
+      }
+
+      setMessages((prev: Message[]) => [...prev, assistantMessage])
+      await loadSessions()
+    } catch (error: any) {
+      const errorMessage: Message = {
+        role: 'assistant',
+        content: error.response?.data?.detail || 'Sorry, something went wrong while loading all records.',
+        error: error.message,
+        timestamp: new Date(),
+      }
+      setMessages((prev: Message[]) => [...prev, errorMessage])
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -197,6 +324,10 @@ const ChatInterface = ({ showUpload, onUploadToggle, selectedModel }: ChatInterf
         error: response.data.error,
         timestamp: new Date(),
         modelUsed: response.data.model_name,  // Include model used
+        hasMoreRecords: response.data.has_more_records || false,
+        totalCount: response.data.total_count || undefined,
+        showVisualization: response.data.show_visualization || false,
+        chartConfig: response.data.chart_config || undefined,
       }
       
 
@@ -205,9 +336,20 @@ const ChatInterface = ({ showUpload, onUploadToggle, selectedModel }: ChatInterf
       // Reload sessions to update the list
       await loadSessions()
     } catch (error: any) {
+      console.error('Error sending message:', error)
+      
+      // Check if it's an authentication error
+      if (error.response?.status === 401) {
+        // Don't show error message, let App.tsx handle auth redirect
+        // Just clear loading state
+        setIsLoading(false)
+        return
+      }
+      
+      // For other errors, show error message
       const errorMessage: Message = {
         role: 'assistant',
-        content: error.response?.data?.detail || 'Sorry, something went wrong. Please try again.',
+        content: error.response?.data?.detail || error.message || 'Sorry, something went wrong. Please try again.',
         error: error.message,
         timestamp: new Date(),
       }
@@ -311,6 +453,9 @@ const ChatInterface = ({ showUpload, onUploadToggle, selectedModel }: ChatInterf
                 onSuggestedQuestionClick={sendMessage}
                 selectedTable={selectedTable}
                 tableColumns={selectedTableColumns}
+                onShowAllRecords={handleShowAllRecords}
+                onVisualize={handleVisualize}
+                sessionId={currentSessionId || undefined}
               />
             ))}
             {isLoading && (
